@@ -1,225 +1,130 @@
 # ret-sync
 
-**ret-sync** stands for Reverse-Engineering Tools SYNChronization. It is a set
-of plugins that help to synchronize a debugging session
-(WinDbg/GDB/LLDB/OllyDbg/OllyDbg2/x64dbg) with a disassembler (IDA/Ghidra/Binary Ninja).
-The underlying idea is simple: take the best from both worlds (static and
-dynamic analysis).
+**ret-sync** は Reverse-Engineering Tools SYNChronization の略で、デバッガー
+（WinDbg/GDB/LLDB/OllyDbg/OllyDbg2/x64dbg）と逆アセンブラー
+（IDA/Ghidra/Binary Ninja）を同期するプラグイン集です。静的解析と動的解析、
+それぞれの長所を同時に利用することを目的としています。
 
-Debuggers and dynamic analysis provide us with:
+デバッガーと動的解析には、レジスターやメモリーなどの実行時コンテキストと、
+WinDbg の `!peb`、`!drvobj`、`!address` などの専用機能があります。一方、
+逆アセンブラーと静的解析には、モジュール全体の俯瞰、コード解析、シグネチャー、
+型、グラフ表示、デコンパイル、解析結果の永続化といった利点があります。
 
-* local view, with live dynamic context (registers, memory, *etc.*)
-* built-in specialized features/API (ex: WinDbg's ``!peb``, ``!drvobj``,
-``!address``, *etc.*)
+主な機能は次のとおりです。
 
-Disassemblers and static analysis provide us with:
+* デバッガーの状態に合わせてグラフ表示とデコンパイル表示を同期
+* ASLR を意識せずに利用可能（アドレスは実行時にリベース）
+* コメントやコマンド出力をデバッガーから逆アセンブラーへ転送
+* 複数の IDB/GPR を同時に同期し、複数モジュール間を容易に追跡
+* デバッガーと逆アセンブラーを別ホストや仮想マシン上で実行可能
 
-* macro view over modules
-* code analysis, signatures, types, *etc.*
-* fancy graph view
-* decompilation
-* persistent storage of knowledge within IDBs/GPRs
+**ret-sync** は [qb-sync](https://github.com/quarkslab/qb-sync) のフォークです。
 
-Key features:
+---
 
-* synchronize graph and decompilation views with debugger's state
-* no need to deal with ASLR, addresses are rebased on-the-fly
-* pass data (comment, command output) from debugger to disassembler
-* multiple IDBs/GPRs can be synced at the same time allowing to easily trace
-  through multiple modules
-* disassembler and debugger can be on different hosts / VMs
+## 目次
 
-**ret-sync** is a fork of [qb-sync](https://github.com/quarkslab/qb-sync)
-that I developed and maintained during my stay at
-[Quarkslab](http://www.quarkslab.com).
+* [リポジトリ構成](#リポジトリ構成)
+* [前提条件](#前提条件)
+* [バイナリリリース](#バイナリリリース)
+* [設定](#設定)
+* [インストール](#インストール)
+  * [IDA](#ida)
+  * [Ghidra](#ghidra)
+  * [Binary Ninja](#binary-ninja)
+  * [WinDbg](#windbg)
+  * [GDB](#gdb)
+  * [LLDB](#lldb)
+  * [OllyDbg と x64dbg](#ollydbg-と-x64dbg)
+* [使い方](#使い方)
+* [Python ライブラリー](#python-ライブラリー)
+* [既知の問題と制限](#既知の問題と制限)
+* [ライセンス](#ライセンス)
 
+## リポジトリ構成
 
--------------------------------------------------------------------------------
-# Table of contents
+デバッガー側のプラグイン：
 
-- [Repository content](#repository-content)
-- [General prerequisites](#general-prerequisites)
-- [Binary release](#binary-release)
-- [**ret-sync** configuration](#ret-sync-configuration)
-- [Installation](#installation)
-  - [IDA extension](#ida-extension)
-  - [Ghidra extension](#ghidra-extension)
-  - [Binary Ninja extension](#binary-ninja-extension)
-  - [WinDbg extension](#windbg-extension)
-  - [GNU gdb (GDB) installation](#gnu-gdb-gdb-installation)
-  - [LLDB installation](#lldb-installation)
-  - [OllyDbg 1.10 installation](#ollydbg-110-installation)
-  - [OllyDbg2 installation](#ollydbg2-installation)
-  - [x64dbg installation](#x64dbg-installation)
-- [Usage](#usage)
-  - [**ret-sync** debugger commands](#ret-sync-debugger-commands)
-  - [IDA usage](#ida-usage)
-  - [Ghidra usage](#ghidra-usage)
-  - [Binary Ninja usage](#binary-ninja-usage)
-  - [WinDbg usage](#windbg-usage)
-  - [GNU gdb (GDB) usage](#gnu-gdb-gdb-usage)
-  - [LLDB usage](#lldb-usage)
-  - [OllyDbg 1.10 usage](#ollydbg-110-usage)
-  - [OllyDbg2 usage](#ollydbg2-usage)
-  - [x64dbg usage](#x64dbg-usage)
-  - [Python library usage](#python-library-usage)
-- [Extend](#extend)
-- [TODO](#todo)
-- [Known Bugs/Limitations](#known-bugslimitations)
-- [License](#license)
-- [Greetz](#greetz)
--------------------------------------------------------------------------------
+* `ext_windbg/sync`：WinDbg 拡張のソース（ビルド後は `sync.dll`）
+* `ext_gdb/sync.py`：GDB プラグイン
+* `ext_lldb/sync.py`：LLDB プラグイン
+* `ext_olly1`：OllyDbg 1.10 プラグイン
+* `ext_olly2`：OllyDbg 2 プラグイン
+* `ext_x64dbg`：x64dbg プラグイン
 
-# Repository content
+逆アセンブラー側のプラグイン：
 
-The debugger plugins:
+* `ext_ida/SyncPlugin.py`：IDA プラグイン
+* `ext_ghidra`：Ghidra プラグイン
+* `ext_bn/retsync`：Binary Ninja プラグイン
 
-* `ext_windbg/sync`: WinDbg extension source files, once built: `sync.dll`
-* `ext_gdb/sync.py`: GDB plugin
-* `ext_lldb/sync.py`: LLDB plugin
-* `ext_olly1`: OllyDbg 1.10 plugin
-* `ext_olly2`: OllyDbg v2 plugin
-* `ext_x64dbg`: x64dbg plugin
+単体利用向けライブラリー：
 
-The disassembler plugins:
+* `ext_lib/sync.py`：Python ライブラリー
 
-* `ext_ida/SyncPlugin.py`
-* `ext_ghidra/dist/ghidra_*_retsync.zip`: Ghidra plugin
-* `ext_bn/retsync`: Binary Ninja plugin
+## 前提条件
 
+IDA および GDB プラグインには、有効な Python 環境が必要です。Python 2.7
+以降と Python 3 に対応しています。各製品の対応状況については
+[既知の問題と制限](#既知の問題と制限)も参照してください。
 
-And the library plugin:
+## バイナリリリース
 
-* `ext_lib/sync.py`: standalone Python library
+WinDbg/OllyDbg/OllyDbg2/x64dbg 向けのビルド済みバイナリは、
+[Azure DevOps のパイプライン](https://dev.azure.com/bootlegdev/ret-sync-release/_build/latest/ret-sync-release-CI?definitionId=8?branchName=master)
+から取得できます。最新ビルドを選択し、`Related` セクションの成果物を確認してください。
 
+![パイプラインの成果物](img/pipeline.png)
 
-# General prerequisites
+Ghidra 用のビルド済み ZIP は `ext_ghidra/dist` にも収録されています。
+ファイル名に記載されたバージョンの Ghidra でのみ使用してください。
 
-IDA and GDB plugins require a valid Python setup. Python 2 (>=2.7) and Python
-3 are supported.
+## 設定
 
+一般的な構成（デバッガーと逆アセンブラーが同じホストにあり、モジュール名が一致する構成）
+では、設定なしで動作します。必要に応じて、ユーザーのホームディレクトリーに `.sync`
+という INI 形式の設定ファイルを作成できます。IDA と Ghidra は、IDB または Ghidra
+プロジェクトのディレクトリーにある `.sync` を先に読み込みます。ローカル設定がある場合、
+グローバル設定は無視されます。`.sync` は自動では作成されません。
 
-# Binary release
+### リモートデバッグ
 
-Pre-built binaries for WinDbg/OllyDbg/OllyDbg2/x64dbg debuggers are proposed
-through an ``Azure DevOps`` pipeline: [![Build Status](https://dev.azure.com/bootlegdev/ret-sync-release/_apis/build/status/ret-sync-release-CI?branchName=master)](https://dev.azure.com/bootlegdev/ret-sync-release/_build/latest/ret-sync-release-CI?definitionId=8?branchName=master)
+逆アセンブラー側とデバッガー側の両方に、到達可能な実 IP アドレスと同じポートを設定します。
+Ghidra 側では `.sync` をホームディレクトリーに置きます。
 
-Select the last build and check the artifacts under the ``Related`` section: ``6 published``.
-
-![](img/pipeline.png)
-
-
-A pre-built plugin archive of the Ghidra plugin is provided in `ext_ghidra/dist`.
-
-
-# **ret-sync** configuration
-
-**ret-sync** should work out of the box for most users with a typical setup:
-debugger and disassembler(s) on the same host, module names matching.
-
-Still, in some scenarios a specific configuration may be used. For that,
-extensions and plugins check for an optional global configuration file named
-`.sync` in the user's home directory. It must be a valid ``.INI`` file.
-
-Additionally, the IDA and Ghidra plugins also look for the configuration file
-in the IDB or project directory (`<project>.rep`) first to allow local,
-per-IDB/project, settings. If a local configuration file is present, the
-global configuration file is ignored.
-
-Values declared in these configuration files override default values. Please
-note, that **no** `.sync` file is created by default.
-
-Below we detail, three common scenarios where a configuration file is
-useful/needed:
-
-* Remote debugging
-* Modules names mismatch
-* Missing PID
-
-
-## Remote debugging: debugger and disassembler are on different hosts
-
-The ``[INTERFACE]`` section is used to customize network related settings.
-Let's suppose one wants to synchronize IDA with a debugger running inside a
-virtual machine (or simply another host), common remote kernel debugging
-scenario.
-
-Simply create two ``.sync`` file:
-
-* one on the machine where IDA is installed, in the IDB directory:
-* For Ghidra, place at home directory, ex. "/home/user" or "C:\Users\user".
-```
+```ini
 [INTERFACE]
 host=192.168.128.1
 port=9234
 ```
 
-It tells **ret-sync** ``IDA`` plugin to listen on the interface
-``192.168.128.1`` with port ``9234``. It goes without saying that this
-interface must be reachable from the remote host or virtual machine.
+`0.0.0.0` は使用しないでください。この値は待ち受けと接続の双方に使われるため、
+接続時に予期しないエラーとなります。
 
-* one on the machine where the debugger is executed, in the user's home directory:
+### モジュール名の別名
 
-```
-[INTERFACE]
-host=192.168.128.1
-port=9234
-```
+解析ファイル名と、デバッガーが認識する実際のモジュール名が異なる場合は、別名を設定します。
 
-It tells **ret-sync** debugger plugin to connect to the **ret-sync** ``IDA``
-plugin configured previously to listen in this interface.
-
-
-***NOTE:*** You must specify a real IP here, and not use `0.0.0.0`. This is
-because the variable is used by multiple sources both for binding and
-connecting, so using `0.0.0.0` will result in weird errors.
-
-
-
-## IDB and debugger modules names are different
-
-```
+```ini
 [ALIASES]
 ntoskrnl_vuln.exe=ntkrnlmp.exe
 ```
 
-The ``[ALIASES]`` section is used to customize the name which is used by a
-disassembler (IDA/Ghidra) to register a module to its dispatcher/program
-manager.
+### Qt Creator で GDB を使用する場合
 
-By default, disassembler plugins use the name of the input file. However one
-may have renamed the file beforehand and it doesn't match anymore the name of
-the actual process or loaded module as seen by the debugger.
+Qt Creator が GDB の出力方法を変更するため、一時ファイルではなく生の出力を使用します。
 
-Here we simply tell to the dispatcher to match the name `ntkrnlmp.exe` (real
-name) instead of `ntoskrnl_vuln.exe` (IDB name).
-
-
-## gdb with Qt Creator debugging frontend
-
-The Qt Creator debugging frontend changes the way gdb command output is logged. Since
-this would interfere with the synchronization an option exists to use the raw gdb output
-for synchronization instead of a temporary file. In the .sync configuration file use
-
-```
+```ini
 [GENERAL]
 use_tmp_logging_file=false
 ```
 
-if you wish to use the Qt debugging frontend for the target.
+### PID やメモリーマップを取得できない環境
 
-## Embedded devices and missing ``/proc/<pid>/maps``
+シリアル接続の組み込み機器や QEMU 上の raw ファームウェアなど、
+`/proc/<pid>/maps` を取得できない場合は初期コンテキストを指定できます。
 
-In some scenarios, such as debugging embedded devices over serial or raw
-firmware in QEMU, gdb is not aware of the PID and cannot access
-``/proc/<pid>/maps``.
-
-In these cases, The ``[INIT]`` section is used to pass a custom context to the
-plugin. It allows overriding some fields such as the PID and memory mappings.
-
-`.sync` content extract:
-
-```
+```ini
 [INIT]
 context = {
       "pid": 200,
@@ -227,898 +132,326 @@ context = {
   }
 ```
 
-Each entry in the mappings is: ``mem_base``, ``mem_end``, ``mem_size``, ``mem_name``.
+各マッピングは `mem_base`、`mem_end`、`mem_size`、`mem_name` の順です。
 
+### Ghidra で自動リベースを無効にする
 
-## Bypassing automatic address rebasing
+動的に生成されたコードなどを raw アドレスで扱う場合は、次の Ghidra 専用設定を使用します。
 
-In some scenarios, such as debugging embedded devices or connecting to
-minimalist debug interfaces, it may be more convenient to bypass the
-automatic address rebasing feature implemented in the disassembler plugins.
-
-The `use_raw_addr` option is currently supported only for Ghidra. In
-the .sync configuration file use:
-
-```
+```ini
 [GENERAL]
 use_raw_addr=true
 ```
 
+## インストール
 
-# Installation
+### IDA
 
-## IDA extension
+#### 前提条件と導入
 
-### IDA prerequisites
+IDA 9.2 以降が必要です。それ以前の IDA では、`ida9.2` タグより前のリビジョンを
+使用してください。`ext_ida` 内の `SyncPlugin.py` と `retsync` ディレクトリーを、
+次のような IDA のプラグインディレクトリーへコピーします。
 
-IDA 9.2+ is required. For older versions please checkout project prior to ``ida9.2`` tag from available ``Tags``.
+* `C:\Program Files\IDA Pro 9.2\plugins`
+* `%APPDATA%\Hex-Rays\IDA Pro\plugins`
+* `~/.idapro/plugins`
 
-### Install the IDA extension
+IDB を開き、`Alt+Shift+S` または **Edit → Plugins → ret-sync** から起動します。
 
-For IDA installation, copy ``Syncplugin.py`` and ``retsync`` folder from
-``ext_ida`` to IDA plugins directory, for example:
+#### トラブルシューティング
 
-* ``C:\Program Files\IDA Pro 7.4\plugins``
-* ``%APPDATA%\Hex-Rays\IDA Pro\plugins``
-* ``~/.idapro/plugins``
+`retsync/rsconfig.py` の次の値でログを調整できます。
 
-### Run the IDA extension
-
-1. Open IDB
-2. Run the plugin in IDA (``Alt-Shift-S``) or ``Edit`` -> ``Plugins`` -> ``ret-sync``
-
-```
-[sync] default idb name: ld.exe
-[sync] sync enabled
-[sync] cmdline: "C:\Program Files\Python38\python.exe" -u "C:\Users\user\AppData\Roaming\Hex-Rays\IDA Pro\plugins\retsync\broker.py" --idb "target.exe"
-[sync] module base 0x100400000
-[sync] hexrays #7.3.0.190614 found
-[sync] broker started
-[sync] plugin loaded
-[sync] << broker << dispatcher not found, trying to run it
-[sync] << broker << dispatcher now runs with pid: 6544
-[sync] << broker << connected to dispatcher
-[sync] << broker << listening on port 63107
-
-```
-
-### IDA plugin troubleshooting
-
-To troubleshoot issues with the IDA extension two options are available in the
-file `retsync/rsconfig.py`:
-
-```
+```python
 LOG_LEVEL = logging.INFO
 LOG_TO_FILE_ENABLE = False
 ```
 
-Setting `LOG_LEVEL` value to ` logging.DEBUG` makes the plugin more verbose.
+`LOG_LEVEL` を `logging.DEBUG` にすると詳細ログを出力します。
+`LOG_TO_FILE_ENABLE` を `True` にすると、`broker.py` と `dispatcher.py` の例外を
+`%TMP%` 内の `retsync.%s.err` 形式のファイルへ記録します。
 
-Setting `LOG_TO_FILE_ENABLE` value to `True` triggers the logging of exception
-information from `broker.py` and `dispatcher.py` into dedicated files. Log file
-are generated in the `%TMP%` folder with a name pattern `retsync.%s.err` .
+### Ghidra
 
+#### Ghidra 拡張のビルド
 
-## Ghidra extension
+ビルド済みの `ext_ghidra/dist/ghidra_*_retsync.zip` を使うか、対象の Ghidra
+に合わせて以下の手順でビルドします。拡張 ZIP はビルドに使った Ghidra の
+バージョン専用です（例：`ghidra_11.4.2_PUBLIC_20250929_retsync.zip`）。
 
-### Build the Ghidra extension
-
-Either use the pre-built version from the `ext_ghidra/dist` folder or follow the instruction to build it.
-Each extension build only supports the version of Ghidra specified in the plugin's file name.
-E.g. `ghidra_9.1_PUBLIC_20191104_retsync.zip` is for Ghidra 9.1 Public.
-
-1. Install Ghidra
-2. Install gradle
-
-```bash
-apt install gradle
-```
-
-3. Build extension for your Ghidra installation (replace `$GHIDRA_DIR` with your installation directory)
+1. 対象バージョンの Ghidra をインストールまたは展開します。
+2. Ghidra が必要とする JDK を用意し、必要なら `JAVA_HOME` を設定します。
+3. `$GHIDRA_DIR/Ghidra/application.properties` の
+   `application.gradle.version` を確認し、そこに指定されたバージョンの Gradle を用意します。
+   ディストリビューションの古い Gradle を無条件に使うのではなく、対象 Ghidra の指定を優先してください。
+4. リポジトリのルートから次を実行します。
 
 ```bash
 cd ext_ghidra
-gradle -PGHIDRA_INSTALL_DIR=$GHIDRA_DIR
+export GHIDRA_INSTALL_DIR=/opt/ghidra
+gradle clean buildExtension
 ```
 
-### Install the Ghidra extension
+`GHIDRA_INSTALL_DIR` は Ghidra のルートディレクトリー（その直下に `support` と
+`Ghidra` がある場所）への絶対パスです。環境変数の代わりに Gradle
+プロジェクトプロパティを使うこともできます。
 
-1. From Ghidra projects manager: ``File`` -> ``Install Extensions...``, click on the
-   `+` sign and select the `ext_ghidra/dist/ghidra_*_retsync.zip` and click OK.
-   This will effectively extract the `retsync` folder from the zip into
-   `$GHIDRA_DIR/Extensions/Ghidra/`
-2. Restart Ghidra as requested
-3. After reloading Ghidra, open a module in CodeBrowser. It should tell you a
-   new extension plugin has been detected. Select "yes" to configure it. Then
-   tick "RetSyncPlugin" and click OK. The console should show something like:
-
-```
-[*] retsync init
-[>] programOpened: tm.sys
-    imageBase: 0x1c0000000
+```bash
+cd ext_ghidra
+gradle clean buildExtension -PGHIDRA_INSTALL_DIR=/opt/ghidra
 ```
 
-4. From Ghidra CodeBrowser tool: use toolbar icons or shortcuts to enable (``Alt+s``)/disable (``Alt+Shift+s``)/restart (``Alt+r``)
-   synchronization.
+ビルドに成功すると、インストール可能な ZIP が `ext_ghidra/dist` に生成されます。
+正確なファイル名には対象 Ghidra のバージョンとリリース日が含まれます。
 
-A status window is also available from ``Windows`` -> ``RetSyncPlugin``. You
-generally want to drop it on the side to integrate it with the Ghidra
-environment windows.
+よくあるビルドエラー：
 
+* `GHIDRA_INSTALL_DIR is not defined!`：環境変数または `-P` オプションを設定してください。
+* Gradle の API/クラス互換性エラー：`application.gradle.version` と実行中の
+  `gradle --version` が合っているか確認してください。
+* Java のバージョンエラー：対象 Ghidra のリリースノートに記載された JDK を使用してください。
 
-## Binary Ninja extension
+#### Ghidra 拡張の導入
 
-Binary Ninja support is experimental, make sure to backup your analysis
-databases.
+1. Ghidra の Project Manager で **File → Install Extensions...** を開きます。
+2. `+` を押し、`ext_ghidra/dist/ghidra_*_retsync.zip` を選択して確定します。
+3. Ghidra を再起動し、CodeBrowser でモジュールを開きます。
+4. 新しいプラグインの検出ダイアログで設定を開き、`RetSyncPlugin` を有効にします。
+5. ツールバーまたは `Alt+S`（有効化）、`Alt+Shift+S`（無効化）、`Alt+R`（再起動）を使います。
 
-### Binary Ninja prerequisites
+状態ウィンドウは **Window → RetSyncPlugin** から表示できます。
 
-**ret-sync** requires Binary Ninja version 2.2 at minimum as well as Python 3
-(Python 2 is not supported).
+### Binary Ninja
 
+Binary Ninja 対応は実験的です。解析データベースをバックアップしてから使用してください。
+Binary Ninja 2.2 以降と Python 3 が必要です（Python 2 は非対応）。
 
-### Install the Binary Ninja extension
+`ext_bn` の内容を `%APPDATA%\Binary Ninja\plugins` などのプラグインディレクトリーへ
+コピーし、Binary Ninja を再起動します。現時点では Plugin Manager から配布していません。
 
-**ret-sync** is not yet distributed through the Binary Ninja's Plugin Manager;
-a manual installation is required. Simply copy that content of the `ext_bn`
-folder into Binary Ninja's plugins folder, for example:
+### WinDbg
 
-`%APPDATA%\Binary Ninja\plugins`
+#### ビルドと導入
 
-After restarting Binary Ninja, the following output should be present in the
-console window:
+`ext_windbg` の Visual Studio ソリューションを使用します。Visual Studio 2017 と
+2026 で動作確認済みで、その間のバージョンも動作する見込みです。ビルドすると
+`x64\release\sync.dll` が生成されます。
 
-```
-[sync] commands added
-Loaded python3 plugin 'retsync'
-```
+WinDbg Classic では、アーキテクチャに合う拡張ディレクトリーへコピーします。
 
-
-## WinDbg extension
-
-### Build the WinDbg extension
-
-Use the Visual Studio 2017
-solution provided in ``ext_windbg``. Visual Studio [Community Edition](https://visualstudio.microsoft.com/fr/vs/community/)
-2017 and 2026 were tested successfully (versions in between should work too).
-
-This will build the `x64\release\sync.dll` file.
-
-### Install the WinDbg extension
-
-You will need to copy the resulting `sync.dll` file into the
-appropriate Windbg extension path.
-
-* WinDbg Classic:
-
-For earlier versions of Windbg this is is something like this (be
-careful of ``x86``/``x64`` flavours), for example
-
-`C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\winext\sync.dll`
-
-* Windbg Preview
-
-The folder for storing extension seems to be based on the PATH, so you need to
-put it one of the queried locations.
-
-One example is to put it here:
-
-`C:\Users\user\AppData\Local\Microsoft\WindowsApps\sync.dll`
-
-### Run the WinDbg extension
-
-1. Launch WinDbg on target
-2. Load extension (``.load`` command)
-
-```
-    0:000> .load sync
-    [sync.dll] DebugExtensionInitialize, ExtensionApis loaded
+```text
+C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\winext\sync.dll
 ```
 
-3. Sync WinDbg
+WinDbg Preview では、PATH から検索される場所（例：
+`C:\Users\user\AppData\Local\Microsoft\WindowsApps\sync.dll`）に置きます。
 
-```
-      0:000> !sync
-      [sync] No argument found, using default host (127.0.0.1:9100)
-      [sync] sync success, sock 0x5a8
-      [sync] probing sync
-      [sync] sync is now enabled with host 127.0.0.1
-```
+対象を開いて `.load sync` を実行し、`!sync` で同期を開始します。Win32 エラー 2 は
+DLL の配置、エラー 193 は x86/x64 の不一致を確認してください。Preview で両方を同じ
+ディレクトリーに置く場合は、x86 版を `sync32.dll` に改名して `.load sync32` とできます。
 
-E.g. in IDA's Output window
+### GDB
 
-```
-      [*] << broker << dispatcher msg: add new client (listening on port 63898), nb client(s): 1
-      [*] << broker << dispatcher msg: new debugger client: dbg connect - HostMachine\HostUser
-      [sync] set debugger dialect to windbg, enabling hotkeys
+`ext_gdb/sync.py` を任意の場所へコピーし、GDB から読み込みます。
+
+```text
+(gdb) source sync.py
+(gdb) sync
 ```
 
-If Windbg's current module matches IDA file name
+自動で読み込む場合は、GDB の auto-load script または初期化ファイルを使用してください。
 
-```
-      [sync] idb is enabled with the idb client matching the module name.
-```
+### LLDB
 
-### WinDbg installation troubleshooting
+LLDB 対応は実験的です。次のコマンドで読み込みます。`~/.lldbinit` に追加することもできます。
 
-Note: If you get the following error, it is because you haven't copied the file
-to the right folder in the above steps.
-
-```
-0: kd> .load sync
-The call to LoadLibrary(sync) failed, Win32 error 0n2
-    "The system cannot find the file specified."
-Please check your debugger configuration and/or network access.
+```text
+(lldb) command script import sync
+(lldb) process launch -s
+(lldb) sync
 ```
 
-The error below usually means that Windbg tried to load the incorrect flavour
-of the extension, ex: ``x64`` in place of the ``x86`` `sync.dll`.
+### OllyDbg と x64dbg
+
+いずれも実験的対応です。OllyDbg/OllyDbg2 は付属の Visual Studio ソリューションで
+ビルドするか、ビルド済み DLL を使い、各製品のプラグインディレクトリーへコピーします。
 
-```
-0:000> .load sync
-The call to LoadLibrary(sync) failed, Win32 error 0n193
-    "%1 is not a valid Win32 application."
-Please check your debugger configuration and/or network access.
-```
+x64dbg は [testplugin](https://github.com/x64dbg/testplugin) を基にしています。必要に応じて
+x64dbg リリースに付属する `pluginsdk` を `ext_x64dbg\x64dbg_sync` へコピーしてビルドし、
+生成された `.dp32` または `.dp64` を x64dbg のプラグインディレクトリーへ置きます。
 
-As WinDbg Preview loads both plugins (``x86`` and  ``x64``) from the same
-directory, one can rename the ``x86`` file `sync32.dll`.
+## 使い方
 
-```
-0:000> .load sync32
-```
+### 共通のデバッガーコマンド
 
+WinDbg ではコマンドの先頭に `!` が必要です（例：GDB の `sync` は WinDbg では
+`!sync`）。GDB では `!` を付けません。
 
-## GNU gdb (GDB) installation
+| コマンド | 説明 |
+|---|---|
+| `synchelp` | 利用可能なコマンドと簡単な説明を表示 |
+| `sync` / `syncoff` | 同期を開始／停止 |
+| `cmt [-a address] <string>` | 現在位置または指定アドレスへコメントを追加 |
+| `rcmt [-a address]` | コメントを削除 |
+| `fcmt [-a address] <string>` | 現在位置を含む関数へコメントを追加 |
+| `raddr <expression>` | 式を評価してリベースしたアドレスをコメントとして追加 |
+| `rln <expression>` | 指定アドレスのシンボルを逆アセンブラーから取得 |
+| `lbl [-a address] <string>` | ラベルを追加 |
+| `cmd <string>` | デバッガーコマンドを実行し、出力をコメントとして追加 |
+| `bc [on\|off\|set 0xBBGGRR]` | 経路の色付けを有効化／無効化／色指定 |
+| `idblist` | dispatcher に接続された IDB クライアントを表示 |
+| `syncmodauto <on\|off>` | モジュール名による解析画面の自動切り替えを変更 |
+| `idbn <n>` | n 番目の IDB をアクティブに設定 |
+| `jmpto <expression>` | 式を評価し、対応モジュールのリベース済み位置へ移動 |
+| `jmpraw <expression>` | リベースや IDB 切り替えをせず raw アドレスへ移動 |
+| `translate <base> <addr> <mod>` | モジュール名とオフセットを基準にアドレスをリベース |
 
-1. Copy the `ext_gdb/sync.py` to the directory of your choice
-2. Load the extension (see auto-load-scripts)
+`cmt`、`rcmt`、`fcmt` の `-a`/`--address` には、命令の有効な 16 進アドレスを指定します。
+引数解析を明示的に終了するには `--` を使用します。
 
-```
-    gdb> source sync.py
-    [sync] configuration file loaded 192.168.52.1:9100
-    [sync] commands added
-```
+#### WinDbg 固有コマンド
 
-## LLDB installation
+| コマンド | 説明 |
+|---|---|
+| `curmod` | 現在の命令位置に対応するモジュール情報を表示 |
+| `modlist` | IDB の切り替えに適した DML 形式のモジュール一覧 |
+| `idb <module name>` | 指定モジュールをアクティブ IDB に設定 |
+| `modmap <base> <size> <name>` | 合成モジュールをデバッガー内部の一覧へ追加 |
+| `modunmap <base>` | 合成モジュールを削除 |
+| `modcheck [md5]` | 現在のモジュールと IDB のファイルが一致するか確認 |
+| `bpcmds [save\|load]` | ブレークポイントコマンドを IDB へ保存／復元 |
+| `ks` | `kv` を DML のクリック可能なアドレス付きで表示 |
 
-LLDB support is experimental, however:
+引数なしの `bc` は現在の命令だけを色付けします。これはコードトレーサーではなく、
+手動ステップした経路をグラフ上で見やすくする機能です。
 
-1. Load extension (can also be added in ``~/.lldbinit``)
+#### GDB 固有コマンド
 
-```
-    lldb> command script import sync
-```
+| コマンド | 説明 |
+|---|---|
+| `bbt` | 逆アセンブラーのシンボルを利用した読みやすいバックトレース |
+| `patch` | 実行中のコンテキストを基に逆アセンブラーのバイト列をパッチ |
+| `bx` | シンボルを逆アセンブラーで解決して GDB の `x` 相当の表示を実行 |
+| `cc` | 逆アセンブラーのカーソル位置まで実行 |
 
-## OllyDbg 1.10 installation
+### IDA の操作
 
-OllyDbg 1.10 support is experimental, however:
+`Overwrite idb name` は dispatcher へ登録する IDB 名を変更します。実行ファイルと DLL
+の名前が衝突する場合などに使用します。同期中に変更した場合は `Restart` を押して再登録します。
 
-1. Build the plugin using the VS solution (optional, see pre-built binaries)
-2. Copy the dll within OllyDbg's plugin directory
+グローバルショートカット：
 
-## OllyDbg2 installation
+* `Alt+Shift+S`：ret-sync を起動
+* `Ctrl+Shift+S`：同期全体を切り替え
+* `Ctrl+H`：Hex-Rays の同期を切り替え
 
-OllyDbg2 support is experimental, however:
+デバッガー操作：
 
-1. Build the plugin using the VS solution (optional, see pre-built binaries)
-2. Copy the dll within OllyDbg2's plugin directory
+* `F2` / `F3`：通常／一回限りのブレークポイント
+* `Ctrl+F2` / `Ctrl+F3`：通常／一回限りのハードウェアブレークポイント
+* `Alt+F2`：現在のアドレスをデバッガー側へ変換
+* `Alt+F5`：続行、`Ctrl+Alt+F5`：実行（GDB のみ）
+* `F10` / `F11`：ステップ／トレース
 
-## x64dbg installation
+### Ghidra の操作
 
-Based on testplugin,  https://github.com/x64dbg/testplugin. x64dbg support is experimental, however:
+`RetSyncPlugin` ウィンドウはドラッグ＆ドロップで CodeBrowser に組み込めます。複数の
+モジュールを同じ CodeBrowser で開くと、それらの間を同期できます。
 
-1. Build the plugin using the VS solution (optional, see pre-built binaries).
-   May you need a different version of the plugin sdk,
-   a copy can be found in each release of x64dbg.
-   Paste the "``pluginsdk``" directory into "``ext_x64dbg\x64dbg_sync``"
-2. Copy the dll (extension is ``.d32`` or ``.dp64``) within x64dbg's plugin directory.
+![Ghidra の RetSyncPlugin](img/ghidra.png)
 
-# Usage
+グローバルショートカット：
 
-## **ret-sync** debugger commands
+* `Alt+S`：同期を有効化
+* `Alt+Shift+S`：同期を無効化
+* `Alt+R`：同期を再起動
+* `Alt+Shift+R`：設定を再読み込み
 
-For command-line oriented debuggers (mainly Windbg and GDB) a set of commands
-is exposed by **ret-sync** to assist in the reverse-engineering task.
+デバッガー操作：
 
-The commands below are generic (Windbg and GDB), please note that a `!`
-prefix is needed on WinDbg (e.g.: `sync`  in GDB, `!sync` in Windbg).
+* `F2` / `Alt+F3`：通常／一回限りのブレークポイント
+* `Ctrl+F2` / `Ctrl+F3`：通常／一回限りのハードウェアブレークポイント
+* `Alt+F2`：現在のアドレスを変換
+* `F5`：続行、`Alt+F5`：実行（GDB のみ）
+* `F10` / `F11`：ステップ／トレース
 
-| Debugger command           | Description                                                                               |
-|----------------------------|-------------------------------------------------------------------------------------------|
-| `synchelp`                   | Display the list of available commands with short explanation                             |
-| `sync`                       | Start synchronization                                                                     |
-| `syncoff`                    | Stop synchronization                                                                      |
-| `cmt [-a address] <string>`  | Add a comment at current ip in disassembler                                               |
-| `rcmt [-a address]`          | Reset comment at current ip in disassembler                                               |
-| `fcmt [-a address] <string>` | Add a function comment for function in which current ip is located                        |
-| `raddr <expression>`         | Add a comment with rebased address evaluated from expression                              |
-| `rln <expression>`           | Get symbol from the disassembler for the given address                                    |
-| `lbl [-a address] <string>`  | Add a label name at current ip in disassembler                                            |
-| `cmd <string>`               | Execute a command in debugger and add its output as comment at current ip in disassembler |
-| `bc <\|\|on\|off\|set 0xBBGGRR>` | Enable/disable path coloring in disassembler                                              |
-| `idblist`                    | Get list of all IDB clients connected to the dispatcher                                   |
-| `syncmodauto <on\|off>`       | Enable/disable disassembler auto switch based on module name                              |
-| `idbn <n>`                   | Set active IDB to the nth client                                                          |
-| `jmpto <expression>`         |                                                                                           |
-| `jmpraw <expression>` | If an IDB is enabled then disassembler's view is synced with the resulting address.    |
-| `translate <base> <addr> <mod>` | rebase an address with respect to its module's name and offset   |
+### Binary Ninja の操作
 
+`Alt+S` で同期を有効化し、`Alt+Shift+S` で無効化します。ブレークポイントやステップの
+ショートカットは、おおむね IDA と同じです。
 
-WinDbg specific commands:
+### OllyDbg と x64dbg の操作
 
-| Debugger command           | Description                                                                               |
-|----------------------------|-------------------------------------------------------------------------------------------|
-| `curmod`  |  Display module infomation for current instruction offset (for troubleshooting) |
-| `modlist`  |  Debugger Markup Language (DML) enhanced module list meant for smoother active idb switching  |
-| `idb <module name>`  |  Set given module as the active idb (see `modlist` enhanced version of `lm`) |
-| `modmap <base> <size> <name>` |  A synthetic ("faked") module (defined using its base address and size) is added to the debugger internal list  |
-| `modunmap <base>` |  Remove a previously mapped synthetic module at base address  |
-| `modcheck <\|\|md5>`  |  Use to check if current module really matches IDB's file (ex: module has been updated)  |
-| `bpcmds <\|\|save\|load\|>` | **bpcmds** wrapper, save and reload **.bpcmds** (breakpoints commands list) output to current IDB  |
-| `ks` | Debugger Markup Language (DML) enhanced output of **kv** command   |
+OllyDbg 1.10 は `Alt+S` / `Alt+U`、OllyDbg2 は `Ctrl+S` / `Ctrl+U` で同期を
+有効化／無効化します。OllyDbg2 ではグラフ同期、コメント、ラベルのみ実装されています。
 
+x64dbg は Plugins メニューまたは `!sync` / `!syncoff` で同期を切り替えます。
+`!synchelp` で使用可能なコマンドを確認できます。
 
-GDB specific commands:
+## Python ライブラリー
 
-| Debugger command           | Description                                                                               |
-|----------------------------|-------------------------------------------------------------------------------------------|
-|`bbt` |  Beautiful backtrace. Similar to **bt** in GDB but requests symbols from disassembler  |
-| `patch`  | Patch bytes in disassembler based on live context   |
-| `bx` | Similar to GDB **x** but using a symbol. The symbol will be resolved by disassembler   |
-| `cc` | Continue to cursor in disassembler  |
-
-
-## IDA usage
-
-### IDA plugin's GUI
-
-The ``Overwrite idb name`` input field is meant to change the default IDB
-name. It is the name that is used by the plugin to register with the
-dispatcher. IDB automatic switch is based on module name matching. In case of
-conflicting names (like a ``foo.exe`` and ``foo.dll``), this can be used to
-ease matching. Please note, if you modify the input field while the sync is
-active, you have to re-register with the dispatcher; this can be done simply
-by using the "``Restart``" button.
-
-As a reminder it is possible to alias by default using the ``.sync`` configuration file.
-
-
-
-### IDA global shortcuts
-
-**ret-sync** defines these global shortcuts in IDA:
-
-* ``Alt-Shift-S``  - Run **ret-sync** plugin
-* ``Ctrl-Shift-S``  - Toggle global syncing
-* ``Ctrl-H``  - Toggle Hex-Rays syncing
-
-Two buttons are also available in the Debug toolbar to toggle global and
-Hex-Rays syncing.
-
-### IDA bindings over debugger commands
-
-``Syncplugin.py`` also registers debugger command wrapper hotkeys.
-
-* ``F2`` - Set breakpoint at cursor address
-* ``F3`` - Set one-shot breakpoint at cursor address
-* ``Ctrl-F2`` - Set hardware breakpoint at cursor address
-* ``Ctrl-F3`` - Set one-shot hardware breakpoint at cursor address
-* ``Alt-F2`` - Translate (rebase in debugger) current cursor address
-* ``Alt-F5`` - Go
-* ``Ctrl-Alt-F5`` - Run (GDB only)
-* ``F10`` - Single step
-* ``F11`` - Single trace
-
-These commands are only available when the current IDB is active. When
-possible they have also been implemented for others debuggers.
-
-## Ghidra usage
-
-### Ghidra plugin's GUI
-
-Once the RetSyncPlugin opened, you can add it to the CodeBrowser window by simple
-drag'n'drop:
-
-![](img/ghidra.png)
-
-If you want to view several modules, files need to be open in the same CodeBrowser
-viewer, simply drag'n'drop the additional ones in the CodeBrowser window to obtain
-the result as above.
-
-### Ghidra global shortcuts
-
-**ret-sync** defines these global shortcuts in Ghidra:
-
-* ``Alt-S``  - Enable syncing
-* ``Alt-Shift-S``  - Disable syncing
-* ``Alt-R``  - Restart syncing
-* ``Alt-Shift-R``  - Reload configuration
-
-### Ghidra bindings over debugger commands
-
-Bindings over debugger commands are also implemented. They are similar to the
-ones from IDA's extension (except the "Go" command).
-
-* ``F2``  - Set breakpoint at cursor address
-* ``Ctrl-F2`` - Set hardware breakpoint at cursor address
-* ``Alt-F3`` - Set one-shot breakpoint at cursor address
-* ``Ctrl-F3`` - Set one-shot hardware breakpoint at cursor address
-* ``Alt-F2`` - Translate (rebase in debugger) current cursor address
-* ``F5`` - Go
-* ``Alt-F5`` - Run (GDB only)
-* ``F10`` - Single step
-* ``F11`` - Single trace
-
-
-## Binary Ninja usage
-
-### Binary Ninja global shortcuts
-
-**ret-sync** defines these global shortcuts in Binary Ninja:
-
-* ``Alt-S``  - Enable syncing
-* ``Alt-Shift-S``  - Disable syncing
-
-
-### Binary Ninja shortcuts
-
-Bindings over debugger commands are also implemented. They are similar to the
-ones from IDA's extension.
-
-* ``F2``  - Set breakpoint at cursor address
-* ``Ctrl-F2`` - Set hardware breakpoint at cursor address
-* ``Alt-F3`` - Set one-shot breakpoint at cursor address
-* ``Ctrl-F3`` - Set one-shot hardware breakpoint at cursor address
-* ``Alt-F2`` - Translate (rebase in debugger) current cursor address
-* ``Alt-F5`` - Go
-* ``F10`` - Single step
-* ``F11`` - Single trace
-
-
-## WinDbg usage
-
-### WinDbg plugin commands
-
-* **!sync**: Start synchronization
-* **!syncoff**: Stop synchronization
-* **!synchelp**: Display the list of available commands with short explanation.
-* **!cmt [-a address] <string>**: Add comment at current ip in IDA
-
-```
-    [WinDbg]
-    0:000:x86> pr
-    eax=00000032 ebx=00000032 ecx=00000032 edx=0028eebc esi=00000032 edi=00000064
-    eip=00430db1 esp=0028ed94 ebp=00000000 iopl=0         nv up ei pl nz na po nc
-    cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000202
-    image00000000_00400000+0x30db1:
-    00430db1 57    push    edi
-
-    0:000:x86> dd esp 8
-    0028ed94  00000000 00433845 0028eebc 00000032
-    0028eda4  0028f88c 00000064 002b049e 00000110
-
-    0:000:x86> !cmt 0028ed94  00000000 00433845 0028eebc 00000032
-    [sync.dll]  !cmt called
-
-    [IDA]
-    .text:00430DB1    push    edi             ; 0028ed94  00000000 00433845 0028eebc 00000032
-```
-
-* **!rcmt [-a address]**: Reset comment at current ip in IDA
-
-```
-    [WinDbg]
-    0:000:x86> !rcmt
-    [sync] !rcmt called
-
-    [IDA]
-    .text:00430DB1    push    edi
-```
-
-* **!fcmt [-a address] <string>**: Add a function comment for function in which current ip is located
-
-```
-    [WinDbg]
-    0:000:x86> !fcmt decodes buffer with key
-    [sync] !fcmt called
-
-    [IDA]
-    .text:004012E0 ; decodes buffer with key
-    .text:004012E0                 public decrypt_func
-    .text:004012E0 decrypt_func    proc near
-    .text:004012E0                 push    ebp
-```
-
-Note: calling this command without argument reset the function's comment.
-
-* **!raddr <expression>**: Add a comment with rebased address evaluated from expression
-* **!rln <expression>**: Get symbol from the disassembler for the given address
-* **!lbl [-a address] <string>**: Add a label name at current ip in disassembler
-
-```
-    [WinDbg]
-    0:000:x86> !lbl meaningful_label
-    [sync] !lbl called
-
-    [IDA]
-    .text:000000000040271E meaningful_label:
-    .text:000000000040271E    mov     rdx, rsp
-```
-
-* **!cmd <string>**: Execute a command in WinDbg and add its output as comment at current ip in disassembler
-
-```
-    [WinDbg]
-    0:000:x86> pr
-    eax=00000032 ebx=00000032 ecx=00000032 edx=0028eebc esi=00000032 edi=00000064
-    eip=00430db1 esp=0028ed94 ebp=00000000 iopl=0         nv up ei pl nz na po nc
-    cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000202
-    image00000000_00400000+0x30db1:
-    00430db1 57     push    edi
-    [sync.dll]  !cmd r edi
-
-    [IDA]
-    .text:00430DB1    push    edi             ; edi=00000064
-```
-
-* **!bc <||on|off|set 0xBBGGRR>** : Enable/disable path coloring in disassembler.
-  This is NOT a code tracing tool,
-  there are efficient tools for that. Each manually stepped instruction is
-  colored in the graph. Color a single instruction at current ip if called
-  without argument.
-  "set" argument is used to set path color with a new hex rgb code (reset color
-  if called with a value > 0xFFFFFF).
-* **!idblist**: Get list of all IDB clients connected to the dispatcher:
-
-```
-    [WinDbg]
-    0:000> !idblist
-    > currently connected idb(s):
-        [0] target.exe
-```
-
-* **!syncmodauto <on|off>**: Enable/disable disassembler auto switch based on module name:
-
-```
-    [WinDbg]
-    0:000> !syncmodauto off
-
-    [IDA]
-    [*] << broker << dispatcher msg: sync mode auto set to off
-```
-
-* **!idbn <n>**: Set active IDB to the nth client. n should be a valid decimal value.
-  This is a semi-automatic mode (personal tribute to the tremendous jj)
-
-```
-    [WinDbg]
-    0:000:> !idbn 0
-    > current idb set to 0
-```
-
-In this example, current active IDB client would have been set to:
-
-```
-	[0] target.exe.
-```
-
-* **!jmpto <expression>**: Expression given as argument is evaluated in the context of the current debugger's status.
-  disassembler's view is then synced with the resulting address if a matching module is registered.
-  Can be seen as a manual syncing, relocation is automatically performed, on the fly.
-  Especially useful for randomly relocated binary.
-* **!jmpraw <expression>**: Expression given as argument is evaluated in the context of the current debugger's status.
-  If an IDB is enabled then disassembler's view is synced with the resulting address. Address is not rebased
-  and there is no IDB switching.
-  Especially useful for dynamically allocated/generated code.
-* **!modmap <base> <size> <name>**: A synthetic ("faked") module (defined using its base address and size) is added to the debugger internal list.
-  From msdn: "If all the modules are reloaded - for example, by calling Reload with the Module parameter set to an empty string - all synthetic modules will be discarded."
-  It can be used to more easily debug dynamically allocated/generated code.
-* **!modunmap <base>**: Remove a previously mapped synthetic module at base address.
-* **!modcheck <||md5>**: Use to check if current module really matches IDB's file (ex: module has been updated)
-  When called without an argument, pdb's GUID from Debug Directory is used. It can alternatively use md5,
-  but only with a local debuggee (not in remote kernel debugging).
-* **!bpcmds <||save|load|>**: **bpcmds** wrapper, save and reload **.bpcmds** (breakpoints commands list) output to current IDB.
-  Display (but not execute) saved data if called with no argument.
-  Persistent storage is achieved using IDA's netnode feature.
-* **!ks**: Debugger Markup Language (DML) enhanced output of **kv** command. Code Addresses are clickable (**!jmpto**) as well as data addresses (**dc**).
-* **!translate <base> <addr> <mod>**: Meant to be used from IDA (``Alt-F2`` shortcut), rebase an address with respect to its module's name and offset.
-
-#### Address optional argument
-
-**!cmt**, **!rcmt** and **!fcmt** commands support an optional address option: ``-a`` or ``--address``.
-Address should be passed as an hexadecimal value. Command parsing is based on python's
-``argparse`` module. To stop line parsing use ``--``.
-
-```
-    [WinDbg]
-    0:000:x86> !cmt -a 0x430DB2 comment
-```
-
-The address has to be a valid instruction's address.
-
-## GNU gdb (GDB) usage
-
-Sync with host:
-
-```
-    gdb> sync
-    [sync] sync is now enabled with host 192.168.52.1
-    <not running>
-
-    gdb> r
-    Starting program: /bin/ls
-    [Thread debugging using libthread_db enabled]
-    Using host libthread_db library "/lib/libthread_db.so.1".
-```
-
-### GDB plugin commands
-
-Use commands, **without "!" prefix**
-
-```
-    (gdb) cmd x/i $pc
-    [sync] command output: => 0x8049ca3:    push   edi
-
-    (gdb) synchelp
-    [sync] extension commands help:
-     > sync <host>
-     > syncoff
-     > cmt [-a address] <string>
-     > rcmt [-a address] <string>
-     > fcmt [-a address] <string>
-     > cmd <string>
-     > bc <on|off|>
-     > rln <address>
-     > bbt <symbol>
-     > patch <addr> <count> <size>
-     > bx /i <symbol>
-     > cc
-     > translate <base> <addr> <mod>
-```
-
-* **rln**: Get symbol from the IDB for the given address
-* **bbt**: Beautiful backtrace. Similar to **bt** but requests symbols from disassembler
-
-```
-    (gdb) bt
-    #0  0x0000000000a91a73 in ?? ()
-    #1  0x0000000000a6d994 in ?? ()
-    #2  0x0000000000a89125 in ?? ()
-    #3  0x0000000000a8a574 in ?? ()
-    #4  0x000000000044f83b in ?? ()
-    #5  0x0000000000000000 in ?? ()
-    (gdb) bbt
-    #0 0x0000000000a91a73 in IKE_GetAssembledPkt ()
-    #1 0x0000000000a6d994 in catcher ()
-    #2 0x0000000000a89125 in IKEProcessMsg ()
-    #3 0x0000000000a8a574 in IkeDaemon ()
-    #4 0x000000000044f83b in sub_44F7D0 ()
-    #5 0x0000000000000000 in  ()
-```
-
-
-* **patch**: Patch bytes in disassembler based on live context
-* **bx**: Beautiful display. Similar to **x** but using a symbol. The symbol
-  will be resolved by disassembler.
-* **cc**: Continue to cursor in disassembler. This is an alternative to using ``F3`` to
-  set a one-shot breakpoint and ``F5`` to continue. This is useful if you prefer
-  to do it from gdb.
-
-```
-    (gdb) b* 0xA91A73
-    Breakpoint 1 at 0xa91a73
-    (gdb) c
-    Continuing.
-
-    Breakpoint 1, 0x0000000000a91a73 in ?? ()
-    (gdb) cc
-    [sync] current cursor: 0xa91a7f
-    [sync] reached successfully
-    (gdb)
-```
-
-
-## LLDB usage
-
-1. Sync with host
-
-```
-    lldb> process launch -s
-    lldb> sync
-    [sync] connecting to localhost
-    [sync] sync is now enabled with host localhost
-    [sync] event handler started
-```
-
-2. Use commands
-
-```
-    lldb> synchelp
-    [sync] extension commands help:
-     > sync <host>                   = synchronize with <host> or the default value
-     > syncoff                       = stop synchronization
-     > cmt <string>                  = add comment at current eip in IDA
-     > rcmt <string>                 = reset comments at current eip in IDA
-     > fcmt <string>                 = add a function comment for 'f = get_func(eip)' in IDA
-     > cmd <string>                  = execute command <string> and add its output as comment at current eip in IDA
-     > bc <on|off|>                  = enable/disable path coloring in IDA
-                                       color a single instruction at current eip if called without argument
-    lldb> cmt mooo
-```
-
-
-## OllyDbg 1.10 usage
-
-1. Use Plugins menu or shortcuts to enable (``Alt+s``)/disable (``Alt+u``)
-   synchronization.
-
-
-## OllyDbg2 usage
-
-1. Use Plugins menu or shortcuts to enable (``Ctrl+s``)/disable (``Ctrl+u``)
-   synchronization.
-
-Due to the beta status of OllyDbg2 API, only the following features have been implemented:
-
-- Graph sync [use ``F7``; ``F8`` for stepping]
-- Comment   [use ``CTRL+;``]
-- Label     [use ``CTRL+:``]
-
-
-## x64dbg usage
-
-1. Use Plugins menu or commands enable ("``!sync"``) or disable ("``!syncoff``") synchronization.
-
-2. Use commands
-
-```
-[sync] synchelp command!
-[sync] extension commands help:
- > !sync                          = synchronize with <host from conf> or the default value
- > !syncoff                       = stop synchronization
- > !syncmodauto <on | off>        = enable / disable idb auto switch based on module name
- > !synchelp                      = display this help
- > !cmt <string>                  = add comment at current eip in IDA
- > !rcmt <string>                 = reset comments at current eip in IDA
- > !idblist                       = display list of all IDB clients connected to the dispatcher
- > !idb <module name>             = set given module as the active idb (see !idblist)
- > !idbn <n>                      = set active idb to the n_th client. n should be a valid decimal value
- > !translate <base> <addr> <mod> = rebase an address with respect to local module's base
- > !insync                        = synchronize the selected instruction block in the disassembly window.
-```
-
-Note: using the **!translate** command from a disassembler (IDA/Ghidra,
-``Alt-F2`` shortcut), will make the disassembler window to "jump" to the
-specific address (equivalent of running **disasm <rebased addr>** in x64dbg
-command line).
-
-
-## Python library usage
-
-One may want to use **ret-sync** core features (position syncing with a
-disassembler, symbol resolution) even though a full debugging environment is
-not available or with a custom tool. To that end, a minimalist Python library
-has been extracted.
-
-The example below illustrates the usage of the Python library with a script
-that walks through the output of an event based logging/tracing tool.
-
+完全なデバッグ環境がない場合や独自ツールから利用する場合は、`ext_lib/sync.py` を使って
+位置同期とシンボル解決を行えます。次はイベント列を順番に同期する例です。
 
 ```python
-from sync import *
+from sync import Sync
 
-HOST = '127.0.0.1'
-
+HOST = "127.0.0.1"
 MAPPINGS = [
-    [0x555555400000, 0x555555402000,  0x2000, " /bin/tempfile"],
-    [0x7ffff7dd3000, 0x7ffff7dfc000, 0x29000, " /lib/x86_64-linux-gnu/ld-2.27.so"],
-    [0x7ffff7ff7000, 0x7ffff7ffb000,  0x4000, " [vvar]"],
-    [0x7ffff7ffb000, 0x7ffff7ffc000,  0x1000, " [vdso]"],
-    [0x7ffffffde000, 0x7ffffffff000, 0x21000, " [stack]"],
+    [0x555555400000, 0x555555402000, 0x2000, "/bin/tempfile"],
 ]
-
 EVENTS = [
-    [0x0000555555400e74, "malloc"],
-    [0x0000555555400eb3, "open"],
-    [0x0000555555400ee8, "exit"]
+    [0x555555400e74, "malloc"],
+    [0x555555400eb3, "open"],
+    [0x555555400ee8, "exit"],
 ]
 
 synctool = Sync(HOST, MAPPINGS)
-
-for e in EVENTS:
-    offset, name = e
+for offset, name in EVENTS:
     synctool.invoke(offset)
-    print("    0x%08x - %s" % (offset, name))
-    print("[>] press enter for next event")
-    input()
+    print("0x%08x - %s" % (offset, name))
+    input("次のイベントへ進むには Enter を押してください")
 ```
 
+## 拡張例
 
-# Extend
+ret-sync はデバッガー以外のツールとも統合できます。過去には次の統合例があります。
 
-While initially focused on dynamic analysis (debuggers), it is of-course
-possible to extend the plugins set and integrate with other tools.
+* [Tetrane REVEN](http://blog.tetrane.com/2015/02/reven-in-your-toolkit.html)
+* [EFI DXE Emulator](https://github.com/assafcarlsbad/efi_dxe_emulator)
+* [Combining static and dynamic binary analysis - ret-sync](https://www.synacktiv.com/ressources/bieresecu1_ret-sync_en.pdf)
 
-- Integration with **REVEN** Timeless Analysis and Debugging Platform by [Tetrane](https://www.tetrane.com/):
-  - http://blog.tetrane.com/2015/02/reven-in-your-toolkit.html
-  - https://twitter.com/tetrane/status/1374768014193799175
-- Integration with **EFI DXE Emulator** by Assaf Carlsbad ([@assaf_carlsbad](https://twitter.com/assaf_carlsbad)):
-  - https://twitter.com/assaf_carlsbad/status/1242114356881641474
-  - https://github.com/assafcarlsbad/efi_dxe_emulator
+## 既知の問題と制限
 
-Other resource(s):
+* Python 2.7/3.7、IDA 7.7（Windows/Linux/macOS）、Ghidra 10.1.1、
+  Binary Ninja 3.0.3225-dev、GDB 8.1.0、LLDB 310.2.37 で動作確認されています。
+  現在の対応条件については、各インストール節も確認してください。
+* 通信相手の認証も通信の暗号化も行いません。信頼できるネットワーク内で使用してください。
+* 自己書き換えコードは対象外です。
+* GDB の `return` では停止イベントが呼ばれない場合があり、マルチスレッドデバッグでは
+  シグナル処理に問題があります。
+* WinDbg では、継続コマンド付きのブレークポイントでも IDA 側が通知を受け、イベント数が
+  多いと遅くなる場合があります。その場合は一時的に同期を無効化してください。
+* Ghidra のデコンパイラーウィジェットでは、ショートカットが期待どおり動作しない場合があります。
+* IDA の大きなグラフは再描画が遅く、Linux ではショートカットが競合する場合があります。
+* Logitech Updater が既定ポート `9100` を使うことがあります。その場合は `.sync` で
+  別のポートを指定してください。
 
-- "*Combining static and dynamic binary analysis - ret-sync*" by Jean-Christophe Delaunay
-  - https://www.synacktiv.com/ressources/bieresecu1_ret-sync_en.pdf
-
-
-# TODO
-
-- Sure.
-
-# Known Bugs/Limitations
-
-- Tested with Python 2.7/3.7, IDA 7.7 (Windows, Linux and Mac OS X), Ghidra 10.1.1, Binary Ninja 3.0.3225-dev, GNU gdb (GDB) 8.1.0 (Debian), lldb 310.2.37.
-- **THERE IS NO AUTHENTICATION/ENCRYPTION** whatsoever between the parties; you're on your own.
-- Self modifying code is out of scope.
-
-With GDB:
-
-- it seems that stop event is not called when using 'return' command.
-- multi-threading debugging have issues with signals.
-
-With WinDbg:
-
-- IDA's client plugin gets notified even though encountered breakpoint
-  uses a command string that makes it continue ('``g``'). This can cause major slow-down
-  if there are too much of these events. A limited fix has been implemented, the
-  best solution is still to sync off temporarily.
-- Possible race condition
-
-With Ghidra:
-
-- Shortcuts are not working as expected in decompiler widget.
-
-With IDA:
-
-- Graph window redrawing is quite slow for big graphs.
-- **ret-sync** shortcuts conflicts in Linux environments.
-
-Conflict(s):
-
-- Logitech Updater software is known to use the same default port (9100). A solution
-  is to use a global `.sync` configuration file to define a different port.
-
-```
+```ini
 [INTERFACE]
 host=127.0.0.1
 port=9234
 ```
 
-# License
+## ライセンス
 
-**ret-sync** is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+**ret-sync** は GNU General Public License バージョン 3、またはそれ以降の
+バージョンの条件で再配布・変更できるフリーソフトウェアです。詳細は `COPYING` を参照してください。
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+Binary Ninja プラグインは MIT License で提供されます。
 
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see http://www.gnu.org/licenses/.
+## 謝辞
 
-The Binary Ninja plugin is released under the MIT licence.
-
-
-# Greetz
-
-Hail to Bruce Dang, StalkR, @Ivanlef0u, Damien Aumaître, Sébastien Renaud and
-Kévin Szkudlapski, @_m00dy_, @saidelike, Xavier Mehrenberger, ben64, Raphaël
-Rigo, Jiss for their kindness, help, feedbacks and thoughts. Ilfak Guilfanov,
-Igor Skochinsky and Arnaud Diederen for their help with IDA's internals and
-outstanding support. Thank you to Jordan Wiens and Vector 35. Finally, thank
-you also to all the contributors and everyone who reported issues/bugs.
+本プロジェクトへの助言、フィードバック、バグ報告、コード提供を行ったすべての方々、
+ならびに qb-sync と各対応ツールの開発者・コミュニティに感謝します。
